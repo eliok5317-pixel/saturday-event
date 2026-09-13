@@ -42,7 +42,7 @@
     <section id="view-guestlist" class="card hidden">
       <h2>Checked-in guests</h2>
       <table class="guest-table">
-        <thead><tr><th>Name</th><th>Gender</th><th>Matched?</th></tr></thead>
+        <thead><tr><th>Connection</th><th>Gender</th><th>Matched?</th></tr></thead>
         <tbody id="guest-table-body"></tbody>
       </table>
     </section>
@@ -96,7 +96,7 @@
     tbody.innerHTML = '';
     guests.forEach(function (g) {
       var tr = document.createElement('tr');
-      tr.innerHTML = '<td>' + escapeHtml(g.name) + '</td><td>' + escapeHtml(g.gender) + '</td><td>' + (g.match_id ? 'Yes' : 'No') + '</td>';
+      tr.innerHTML = '<td>' + escapeHtml(g.family_connection) + '</td><td>' + escapeHtml(g.gender) + '</td><td>' + (g.match_id ? 'Yes' : 'No') + '</td>';
       tbody.appendChild(tr);
     });
   }
@@ -120,12 +120,19 @@
     return ADJECTIVES[Math.floor(Math.random() * ADJECTIVES.length)] + ' ' + NOUNS[Math.floor(Math.random() * NOUNS.length)];
   }
 
-  function hobbyScore(a, b) {
+  // CUSTOMIZE: the +3 and +2 weights below are how strongly each factor
+  // pulls a pair together. Raise family-connection's weight if you want
+  // "meet someone outside your usual circle" to matter more than shared
+  // hobbies, or lower it if hobbies should matter more.
+  function matchScore(a, b) {
     var ah = [a.hobby1, a.hobby2].filter(Boolean).map(function (s) { return s.toLowerCase().trim(); });
     var bh = [b.hobby1, b.hobby2].filter(Boolean).map(function (s) { return s.toLowerCase().trim(); });
     var score = 0;
     ah.forEach(function (h) { if (bh.indexOf(h) !== -1) score += 2; });
     if (a.single_status === 'single' && b.single_status === 'single') score += 1;
+    // Reward pairs who know the family through DIFFERENT circles, so people
+    // meet someone new rather than someone from their own existing group.
+    if (a.family_connection && b.family_connection && a.family_connection !== b.family_connection) score += 3;
     return score;
   }
 
@@ -134,7 +141,7 @@
     poolA.forEach(function (a) {
       poolB.forEach(function (b) {
         if (a.id === b.id) return;
-        candidates.push({ a: a, b: b, score: hobbyScore(a, b) });
+        candidates.push({ a: a, b: b, score: matchScore(a, b) });
       });
     });
     candidates.sort(function (x, y) { return y.score - x.score; });

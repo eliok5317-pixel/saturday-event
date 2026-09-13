@@ -26,15 +26,22 @@
       <h1>You're in.</h1>
       <p>Answer a few quick things and we'll find you a match for tonight.</p>
       <form id="checkin-form">
-        <label for="name">Your name</label>
-        <input type="text" id="name" name="name" required placeholder="e.g. Sarah">
-
         <label for="gender">Gender</label>
         <select id="gender" name="gender" required>
           <option value="" disabled selected>Choose one</option>
           <option value="male">Male</option>
           <option value="female">Female</option>
           <option value="other">Other / prefer not to say</option>
+        </select>
+
+        <label for="family_connection">How do you know the Khoury family?</label>
+        <select id="family_connection" name="family_connection" required>
+          <option value="" disabled selected>Choose one</option>
+          <option value="Satellity">Satellity</option>
+          <option value="SABIS">SABIS</option>
+          <option value="Germany">Germany</option>
+          <option value="AUB">AUB</option>
+          <option value="Other">Other</option>
         </select>
 
         <div class="field-row">
@@ -73,7 +80,8 @@
     <!-- MATCHED -->
     <section id="view-matched" class="card hidden">
       <div class="status-row"><span class="pulse-dot" style="background:var(--coral)"></span><strong>You've been matched!</strong></div>
-      <h1 class="partner-name" id="partner-name"></h1>
+      <h1 class="partner-name">Your match</h1>
+      <p class="partner-fact" id="partner-connection"></p>
       <p class="partner-fact" id="partner-hobbies"></p>
       <p class="partner-fact" id="partner-single"></p>
       <p id="partner-description"></p>
@@ -88,7 +96,7 @@
 
     <!-- CHAT -->
     <section id="view-chat" class="card hidden">
-      <h2 id="chat-partner-name"></h2>
+      <h2>Your chat</h2>
       <div class="chat-log" id="chat-log"></div>
       <form id="chat-form" class="chat-input-row">
         <input type="text" id="chat-input" autocomplete="off" placeholder="Say hi…" maxlength="500">
@@ -184,7 +192,7 @@
   }
 
   function renderMatched() {
-    document.getElementById('partner-name').textContent = partnerGuest.name;
+    document.getElementById('partner-connection').textContent = 'Knows the family through: ' + partnerGuest.family_connection;
     var hobbies = [partnerGuest.hobby1, partnerGuest.hobby2].filter(Boolean).join(' & ');
     document.getElementById('partner-hobbies').textContent = 'Into: ' + hobbies;
     var sLabel = singleLabel(partnerGuest.single_status);
@@ -192,7 +200,6 @@
     if (sLabel) { sEl.textContent = sLabel; sEl.classList.remove('hidden'); } else { sEl.classList.add('hidden'); }
     document.getElementById('partner-description').textContent = partnerGuest.description;
     document.getElementById('secret-word').textContent = myMatch.secret_word;
-    document.getElementById('chat-partner-name').textContent = 'Chat with ' + partnerGuest.name;
     show('view-matched');
     launchConfetti();
   }
@@ -202,8 +209,8 @@
     var fd = new FormData(e.target);
     var payload = {
       device_id: deviceId,
-      name: (fd.get('name') || '').trim(),
       gender: fd.get('gender'),
+      family_connection: fd.get('family_connection'),
       hobby1: (fd.get('hobby1') || '').trim(),
       hobby2: (fd.get('hobby2') || '').trim() || null,
       description: (fd.get('description') || '').trim(),
