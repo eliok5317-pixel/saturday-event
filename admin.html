@@ -186,16 +186,23 @@
         return;
       }
 
+      var failedPairs = [];
       for (var i = 0; i < pairs.length; i++) {
         var a = pairs[i][0], b = pairs[i][1];
         var word = randomSecretWord();
         var mRes = await sb.from('matches').insert({ guest_a: a.id, guest_b: b.id, secret_word: word }).select().single();
-        if (mRes.error) { console.error(mRes.error); continue; }
-        await sb.from('guests').update({ match_id: mRes.data.id }).eq('id', a.id);
-        await sb.from('guests').update({ match_id: mRes.data.id }).eq('id', b.id);
+        if (mRes.error) { console.error(mRes.error); failedPairs.push([a, b]); continue; }
+        var uA = await sb.from('guests').update({ match_id: mRes.data.id }).eq('id', a.id);
+        var uB = await sb.from('guests').update({ match_id: mRes.data.id }).eq('id', b.id);
+        if (uA.error || uB.error) { console.error(uA.error || uB.error); failedPairs.push([a, b]); }
       }
 
-      resultEl.textContent = pairs.length + ' new match' + (pairs.length === 1 ? '' : 'es') + ' created.';
+      if (failedPairs.length > 0) {
+        resultEl.textContent = pairs.length + ' pair(s) processed, but ' + failedPairs.length +
+          ' didn\u2019t fully complete — check the guests/matches tables in Supabase for anyone still showing "No" under Matched.';
+      } else {
+        resultEl.textContent = pairs.length + ' new match' + (pairs.length === 1 ? '' : 'es') + ' created.';
+      }
     } catch (e) {
       console.error(e);
       resultEl.textContent = 'Something went wrong — check the browser console.';
