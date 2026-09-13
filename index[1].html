@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Match Night</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=Manrope:wght@400;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="wrap">
+  <div class="container">
+    <div class="eventname" id="event-name-label">Match Night</div>
+
+    <div id="error-banner" class="error-banner hidden"></div>
+
+    <!-- LOADING -->
+    <section id="view-loading" class="card">
+      <p>Loading…</p>
+    </section>
+
+    <!-- CHECK-IN FORM -->
+    <section id="view-checkin" class="card hidden">
+      <h1>You're in.</h1>
+      <p>Answer a few quick things and we'll find you a match for tonight.</p>
+      <form id="checkin-form">
+        <label for="name">Your name</label>
+        <input type="text" id="name" name="name" required placeholder="e.g. Sarah">
+
+        <label for="gender">Gender</label>
+        <select id="gender" name="gender" required>
+          <option value="" disabled selected>Choose one</option>
+          <option value="male">Male</option>
+          <option value="female">Female</option>
+          <option value="other">Other / prefer not to say</option>
+        </select>
+
+        <div class="field-row">
+          <div>
+            <label for="hobby1">A hobby of yours</label>
+            <input type="text" id="hobby1" name="hobby1" required placeholder="e.g. football">
+          </div>
+          <div>
+            <label for="hobby2">Another one (optional)</label>
+            <input type="text" id="hobby2" name="hobby2" placeholder="e.g. photography">
+          </div>
+        </div>
+
+        <label for="description">What are you wearing? (or just describe yourself)</label>
+        <textarea id="description" name="description" required placeholder="e.g. blue denim jacket, curly hair, glasses"></textarea>
+
+        <label for="single_status">Are you single?</label>
+        <select id="single_status" name="single_status" required>
+          <option value="" disabled selected>Choose one</option>
+          <option value="single">Yes</option>
+          <option value="not_single">No</option>
+          <option value="prefer_not_to_say">Prefer not to say</option>
+        </select>
+
+        <button type="submit" class="btn btn-primary">Check in</button>
+      </form>
+    </section>
+
+    <!-- WAITING -->
+    <section id="view-waiting" class="card hidden">
+      <div class="status-row"><span class="pulse-dot"></span><strong>Checked in</strong></div>
+      <h1>Hang tight.</h1>
+      <p>We're waiting for the host to run the matching. Keep this tab open — this screen will update on its own the moment you're matched.</p>
+    </section>
+
+    <!-- MATCHED -->
+    <section id="view-matched" class="card hidden">
+      <div class="status-row"><span class="pulse-dot" style="background:var(--coral)"></span><strong>You've been matched!</strong></div>
+      <h1 class="partner-name" id="partner-name"></h1>
+      <p class="partner-fact" id="partner-hobbies"></p>
+      <p class="partner-fact" id="partner-single"></p>
+      <p id="partner-description"></p>
+
+      <div class="secret-ticket">
+        <p>Find them in the room, then confirm it's really them with your secret word:</p>
+        <div class="secret-word" id="secret-word"></div>
+      </div>
+
+      <button type="button" class="btn btn-secondary" id="open-chat-btn">Open chat</button>
+    </section>
+
+    <!-- CHAT -->
+    <section id="view-chat" class="card hidden">
+      <h2 id="chat-partner-name"></h2>
+      <div class="chat-log" id="chat-log"></div>
+      <form id="chat-form" class="chat-input-row">
+        <input type="text" id="chat-input" autocomplete="off" placeholder="Say hi…" maxlength="500">
+        <button type="submit" class="btn btn-primary">Send</button>
+      </form>
+    </section>
+
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="supabase-config.js"></script>
+<script>
+(function () {
+  document.getElementById('event-name-label').textContent = window.EVENT_NAME || 'Match Night';
+  document.title = window.EVENT_NAME || 'Match Night';
+
+  if (!window.SUPABASE_URL || window.SUPABASE_URL.includes('YOUR-PROJECT-REF')) {
+    showError('This app is not configured yet — supabase-config.js still has placeholder values.');
+    hide('view-loading');
+    return;
+  }
+
+  var sb = window.supabase.createClient(window.SUPABASE_URL, window.SUPABASE_ANON_KEY);
+
+  function getDeviceId() {
+    var id = localStorage.getItem('matchnight_device_id');
+    if (!id) {
+      id = (crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random());
+      localStorage.setItem('matchnight_device_id', id);
+    }
+    return id;
+  }
+  var deviceId = getDeviceId();
+
+  var myGuest = null, myMatch = null, partnerGuest = null, chatChannel = null;
+
+  var views = ['view-loading', 'view-checkin', 'view-waiting', 'view-matched', 'view-chat'];
+  function show(id) { views.forEach(function (v) { document.getElementById(v).classList.toggle('hidden', v !== id); }); }
+  function hide(id) { document.getElementById(id).classList.add('hidden'); }
+  function showError(msg) {
+    var b = document.getElementById('error-banner');
+    b.textContent = msg;
+    b.classList.remove('hidden');
+  }
+
+  async function init() {
+    try {
+      var res = await sb.from('guests').select('*').eq('device_id', deviceId).maybeSingle();
+      if (res.error) throw res.error;
+      if (res.data) {
+        myGuest = res.data;
+        if (myGuest.match_id) {
+          await loadMatch(myGuest.match_id);
+        } else {
+          show('view-waiting');
+          subscribeToMyGuest();
+        }
+      } else {
+        show('view-checkin');
+      }
+    } catch (e) {
+      console.error(e);
+      showError('Could not connect. Check your internet connection and reload.');
+      show('view-checkin');
+    }
+  }
+
+  function subscribeToMyGuest() {
+    sb.channel('guest-' + deviceId)
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'guests', filter: 'device_id=eq.' + deviceId }, function (payload) {
+        myGuest = payload.new;
+        if (myGuest.match_id) loadMatch(myGuest.match_id);
+      })
+      .subscribe();
+  }
+
+  async function loadMatch(matchId) {
+    var m = await sb.from('matches').select('*').eq('id', matchId).single();
+    if (m.error) { showError('Could not load your match.'); return; }
+    myMatch = m.data;
+    var partnerId = (myMatch.guest_a === myGuest.id) ? myMatch.guest_b : myMatch.guest_a;
+    var p = await sb.from('guests').select('*').eq('id', partnerId).single();
+    if (p.error) { showError('Could not load your match.'); return; }
+    partnerGuest = p.data;
+    renderMatched();
+  }
+
+  function singleLabel(s) {
+    if (s === 'single') return 'They said they\u2019re single.';
+    if (s === 'not_single') return 'They said they\u2019re not single.';
+    return null;
+  }
+
+  function renderMatched() {
+    document.getElementById('partner-name').textContent = partnerGuest.name;
+    var hobbies = [partnerGuest.hobby1, partnerGuest.hobby2].filter(Boolean).join(' & ');
+    document.getElementById('partner-hobbies').textContent = 'Into: ' + hobbies;
+    var sLabel = singleLabel(partnerGuest.single_status);
+    var sEl = document.getElementById('partner-single');
+    if (sLabel) { sEl.textContent = sLabel; sEl.classList.remove('hidden'); } else { sEl.classList.add('hidden'); }
+    document.getElementById('partner-description').textContent = partnerGuest.description;
+    document.getElementById('secret-word').textContent = myMatch.secret_word;
+    document.getElementById('chat-partner-name').textContent = 'Chat with ' + partnerGuest.name;
+    show('view-matched');
+    launchConfetti();
+  }
+
+  document.getElementById('checkin-form').addEventListener('submit', async function (e) {
+    e.preventDefault();
+    var fd = new FormData(e.target);
+    var payload = {
+      device_id: deviceId,
+      name: (fd.get('name') || '').trim(),
+      gender: fd.get('gender'),
+      hobby1: (fd.get('hobby1') || '').trim(),
+      hobby2: (fd.get('hobby2') || '').trim() || null,
+      description: (fd.get('description') || '').trim(),
+      single_status: fd.get('single_status')
+    };
+    var btn = e.target.querySelector('button[type=submit]');
+    btn.disabled = true; btn.textContent = 'Checking in…';
+    var res = await sb.from('guests').insert(payload).select().single();
+    if (res.error) {
+      showError('Something went wrong checking you in. Please try again.');
+      btn.disabled = false; btn.textContent = 'Check in';
+      return;
+    }
+    myGuest = res.data;
+    show('view-waiting');
+    subscribeToMyGuest();
+  });
+
+  document.getElementById('open-chat-btn').addEventListener('click', function () {
+    show('view-chat');
+    loadMessages();
+    subscribeToChat();
+  });
+
+  async function loadMessages() {
+    var res = await sb.from('messages').select('*').eq('match_id', myMatch.id).order('created_at', { ascending: true });
+    var log = document.getElementById('chat-log');
+    log.innerHTML = '';
+    if (!res.data || res.data.length === 0) {
+      log.innerHTML = '<div class="chat-empty">No messages yet — say hi!</div>';
+      return;
+    }
+    res.data.forEach(appendMessage);
+  }
+
+  function subscribeToChat() {
+    if (chatChannel) return;
+    chatChannel = sb.channel('chat-' + myMatch.id)
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages', filter: 'match_id=eq.' + myMatch.id }, function (payload) {
+        appendMessage(payload.new);
+      })
+      .subscribe();
+  }
+
+  function appendMessage(msg) {
+    var log = document.getElementById('chat-log');
+    var empty = log.querySelector('.chat-empty');
+    if (empty) empty.remove();
+    var div = document.createElement('div');
+    div.className = 'bubble ' + (msg.sender_device_id === deviceId ? 'me' : 'them');
+    div.textContent = msg.body;
+    log.appendChild(div);
+    log.scrollTop = log.scrollHeight;
+  }
+
+  document.getElementById('chat-form').addEventListener('submit', async function (e) {
+    e.preventDefault();
+    var input = document.getElementById('chat-input');
+    var text = input.value.trim();
+    if (!text) return;
+    input.value = '';
+    await sb.from('messages').insert({ match_id: myMatch.id, sender_device_id: deviceId, body: text });
+  });
+
+  function launchConfetti() {
+    var colors = ['#FF5C7A', '#FFC857', '#2FBF9F', '#1B1A2E'];
+    for (var i = 0; i < 24; i++) {
+      var el = document.createElement('div');
+      el.className = 'confetti-piece';
+      el.style.left = Math.random() * 100 + 'vw';
+      el.style.background = colors[i % colors.length];
+      el.style.animationDuration = (2 + Math.random() * 1.5) + 's';
+      el.style.animationDelay = (Math.random() * 0.4) + 's';
+      document.body.appendChild(el);
+      (function (node) { setTimeout(function () { node.remove(); }, 4000); })(el);
+    }
+  }
+
+  init();
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Match Night — Host</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=Manrope:wght@400;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="wrap">
+  <div class="container">
+    <div class="eventname">Host panel</div>
+
+    <div id="error-banner" class="error-banner hidden"></div>
+
+    <!-- PASSCODE GATE -->
+    <section id="view-gate" class="card">
+      <h1>Host access</h1>
+      <p>Enter the passcode to open the panel.</p>
+      <input type="text" id="passcode-input" placeholder="Passcode">
+      <button type="button" class="btn btn-primary" id="passcode-submit">Enter</button>
+    </section>
+
+    <!-- DASHBOARD -->
+    <section id="view-dashboard" class="card hidden">
+      <h1>Match Night</h1>
+      <div class="stat-grid">
+        <div class="stat-box"><div class="stat-num" id="stat-checked-in">–</div><div class="stat-label">checked in</div></div>
+        <div class="stat-box"><div class="stat-num" id="stat-matched">–</div><div class="stat-label">matched</div></div>
+        <div class="stat-box"><div class="stat-num" id="stat-waiting">–</div><div class="stat-label">waiting for a match</div></div>
+        <div class="stat-box"><div class="stat-num" id="stat-pairs">–</div><div class="stat-label">pairs made</div></div>
+      </div>
+
+      <button type="button" class="btn btn-primary" id="run-matching-btn">Run matching now</button>
+      <p class="hint" id="run-result"></p>
+      <button type="button" class="btn btn-secondary" id="refresh-btn">Refresh stats</button>
+    </section>
+
+    <section id="view-guestlist" class="card hidden">
+      <h2>Checked-in guests</h2>
+      <table class="guest-table">
+        <thead><tr><th>Name</th><th>Gender</th><th>Matched?</th></tr></thead>
+        <tbody id="guest-table-body"></tbody>
+      </table>
+    </section>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="supabase-config.js"></script>
+<script>
+(function () {
+  if (!window.SUPABASE_URL || window.SUPABASE_URL.includes('YOUR-PROJECT-REF')) {
+    document.getElementById('error-banner').textContent = 'This app is not configured yet — supabase-config.js still has placeholder values.';
+    document.getElementById('error-banner').classList.remove('hidden');
+    return;
+  }
+  var sb = window.supabase.createClient(window.SUPABASE_URL, window.SUPABASE_ANON_KEY);
+
+  document.getElementById('passcode-submit').addEventListener('click', function () {
+    var val = document.getElementById('passcode-input').value;
+    if (val === window.ADMIN_PASSCODE) {
+      sessionStorage.setItem('matchnight_admin_ok', '1');
+      openDashboard();
+    } else {
+      alert('Wrong passcode.');
+    }
+  });
+
+  if (sessionStorage.getItem('matchnight_admin_ok') === '1') openDashboard();
+
+  function openDashboard() {
+    document.getElementById('view-gate').classList.add('hidden');
+    document.getElementById('view-dashboard').classList.remove('hidden');
+    document.getElementById('view-guestlist').classList.remove('hidden');
+    refreshStats();
+  }
+
+  document.getElementById('refresh-btn').addEventListener('click', refreshStats);
+  document.getElementById('run-matching-btn').addEventListener('click', runMatching);
+
+  async function refreshStats() {
+    var res = await sb.from('guests').select('*').order('checked_in_at', { ascending: true });
+    if (res.error) { showErr(res.error.message); return; }
+    var guests = res.data;
+    var matchedCount = guests.filter(function (g) { return g.match_id; }).length;
+    document.getElementById('stat-checked-in').textContent = guests.length;
+    document.getElementById('stat-matched').textContent = matchedCount;
+    document.getElementById('stat-waiting').textContent = guests.length - matchedCount;
+    document.getElementById('stat-pairs').textContent = Math.floor(matchedCount / 2);
+
+    var tbody = document.getElementById('guest-table-body');
+    tbody.innerHTML = '';
+    guests.forEach(function (g) {
+      var tr = document.createElement('tr');
+      tr.innerHTML = '<td>' + escapeHtml(g.name) + '</td><td>' + escapeHtml(g.gender) + '</td><td>' + (g.match_id ? 'Yes' : 'No') + '</td>';
+      tbody.appendChild(tr);
+    });
+  }
+
+  function escapeHtml(s) {
+    var d = document.createElement('div');
+    d.textContent = s || '';
+    return d.innerHTML;
+  }
+
+  function showErr(msg) {
+    var b = document.getElementById('error-banner');
+    b.textContent = msg;
+    b.classList.remove('hidden');
+  }
+
+  // CUSTOMIZE: swap in your own word lists if you'd like different-feeling secret words.
+  var ADJECTIVES = ['Golden', 'Velvet', 'Electric', 'Neon', 'Cosmic', 'Silver', 'Wild', 'Lucky', 'Midnight', 'Sunny', 'Rusty', 'Jazzy', 'Quiet', 'Loud', 'Sparkly'];
+  var NOUNS = ['Falcon', 'Pineapple', 'Compass', 'Lantern', 'Rocket', 'Otter', 'Comet', 'Maple', 'Tiger', 'Harbor', 'Biscuit', 'Cactus', 'Penguin', 'Volcano', 'Marble'];
+  function randomSecretWord() {
+    return ADJECTIVES[Math.floor(Math.random() * ADJECTIVES.length)] + ' ' + NOUNS[Math.floor(Math.random() * NOUNS.length)];
+  }
+
+  function hobbyScore(a, b) {
+    var ah = [a.hobby1, a.hobby2].filter(Boolean).map(function (s) { return s.toLowerCase().trim(); });
+    var bh = [b.hobby1, b.hobby2].filter(Boolean).map(function (s) { return s.toLowerCase().trim(); });
+    var score = 0;
+    ah.forEach(function (h) { if (bh.indexOf(h) !== -1) score += 2; });
+    if (a.single_status === 'single' && b.single_status === 'single') score += 1;
+    return score;
+  }
+
+  function greedyPair(poolA, poolB, usedIds, pairsOut) {
+    var candidates = [];
+    poolA.forEach(function (a) {
+      poolB.forEach(function (b) {
+        if (a.id === b.id) return;
+        candidates.push({ a: a, b: b, score: hobbyScore(a, b) });
+      });
+    });
+    candidates.sort(function (x, y) { return y.score - x.score; });
+    candidates.forEach(function (c) {
+      if (usedIds.has(c.a.id) || usedIds.has(c.b.id)) return;
+      usedIds.add(c.a.id);
+      usedIds.add(c.b.id);
+      pairsOut.push([c.a, c.b]);
+    });
+  }
+
+  async function runMatching() {
+    var btn = document.getElementById('run-matching-btn');
+    btn.disabled = true; btn.textContent = 'Matching…';
+    var resultEl = document.getElementById('run-result');
+    resultEl.textContent = '';
+
+    try {
+      var res = await sb.from('guests').select('*').is('match_id', null);
+      if (res.error) throw res.error;
+      var unmatched = res.data;
+
+      var males = unmatched.filter(function (g) { return g.gender === 'male'; });
+      var females = unmatched.filter(function (g) { return g.gender === 'female'; });
+
+      var usedIds = new Set();
+      var pairs = [];
+
+      // Primary pass: opposite gender, best hobby/vibe match first
+      greedyPair(males, females, usedIds, pairs);
+
+      // Fallback pass: anyone still unmatched (leftover gender imbalance, or "other")
+      // gets paired with whoever's left, by shared hobbies — so nobody is stuck
+      // waiting forever just because the room's gender split is uneven.
+      var remaining = unmatched.filter(function (g) { return !usedIds.has(g.id); });
+      greedyPair(remaining, remaining, usedIds, pairs);
+
+      if (pairs.length === 0) {
+        resultEl.textContent = 'No new matches — nobody new to pair up right now.';
+        btn.disabled = false; btn.textContent = 'Run matching now';
+        await refreshStats();
+        return;
+      }
+
+      for (var i = 0; i < pairs.length; i++) {
+        var a = pairs[i][0], b = pairs[i][1];
+        var word = randomSecretWord();
+        var mRes = await sb.from('matches').insert({ guest_a: a.id, guest_b: b.id, secret_word: word }).select().single();
+        if (mRes.error) { console.error(mRes.error); continue; }
+        await sb.from('guests').update({ match_id: mRes.data.id }).eq('id', a.id);
+        await sb.from('guests').update({ match_id: mRes.data.id }).eq('id', b.id);
+      }
+
+      resultEl.textContent = pairs.length + ' new match' + (pairs.length === 1 ? '' : 'es') + ' created.';
+    } catch (e) {
+      console.error(e);
+      resultEl.textContent = 'Something went wrong — check the browser console.';
+    }
+
+    btn.disabled = false; btn.textContent = 'Run matching now';
+    await refreshStats();
+  }
+})();
+</script>
+</body>
+</html>
