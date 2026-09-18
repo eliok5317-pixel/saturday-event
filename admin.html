@@ -157,16 +157,42 @@
   // entirely for anyone younger than that.
   var FEMALE_AGE_RULE_APPLIES_FROM = 0;
 
-  // Hard rule: a female can never be paired with a male younger than her.
+  // CUSTOMIZE: how many years older than her the guy is allowed to be, at
+  // most. Based on your example (18 → 21/22 is fine, 23 is too much), this
+  // defaults to 4 — an 18-year-old's ceiling is 22. Change just this number.
+  var MAX_MALE_AGE_GAP_ABOVE_FEMALE = 4;
+
+  // Hard rule: a female can never be paired with a male younger than her,
+  // or with a male more than MAX_MALE_AGE_GAP_ABOVE_FEMALE years older.
   // Returns false only when we can prove the pair breaks that rule.
   function isAgeEligible(male, female) {
     if (male.age == null || female.age == null) return true; // can't check, don't block
     if (female.age < FEMALE_AGE_RULE_APPLIES_FROM) return true; // below the floor, rule doesn't apply
-    return male.age >= female.age;
+    if (male.age < female.age) return false; // too young
+    if (male.age > female.age + MAX_MALE_AGE_GAP_ABOVE_FEMALE) return false; // too old
+    return true;
   }
 
   function sameBackground(a, b) {
     return a.family_connection === b.family_connection;
+  }
+
+  // ABSOLUTE rule, checked in every pass with no shortage exception: a
+  // family member may only be paired with someone whose connection is
+  // "Friend" or "Other" — never another Family member, and never
+  // Satellity/SABIS/Germany/AUB, since those circles aren't actually new
+  // to a family member. If nobody eligible is available, they stay
+  // unmatched rather than get a pairing that defeats the point.
+  function isFamilyPairingAllowed(a, b) {
+    var aIsFamily = a.family_connection === 'Family';
+    var bIsFamily = b.family_connection === 'Family';
+    if (!aIsFamily && !bIsFamily) return true; // rule doesn't apply to this pair at all
+    var isEligiblePartner = function (other) {
+      return other.family_connection === 'Friend' || other.family_connection === 'Other';
+    };
+    if (aIsFamily && !isEligiblePartner(b)) return false;
+    if (bIsFamily && !isEligiblePartner(a)) return false;
+    return true;
   }
 
   function hobbyOverlapCount(a, b) {
@@ -216,6 +242,7 @@
     poolA.forEach(function (a) {
       poolB.forEach(function (b) {
         if (a.id === b.id) return;
+        if (!isFamilyPairingAllowed(a, b)) return;
         if (opts.requireDifferentBackground && sameBackground(a, b)) return;
         if (opts.enforceAgeRule) {
           var male = a.gender === 'male' ? a : (b.gender === 'male' ? b : null);
