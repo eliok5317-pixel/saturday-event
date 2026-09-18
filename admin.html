@@ -42,7 +42,7 @@
     <section id="view-guestlist" class="card hidden">
       <h2>Checked-in guests</h2>
       <table class="guest-table">
-        <thead><tr><th>Connection</th><th>Gender</th><th>Matched?</th></tr></thead>
+        <thead><tr><th>Connection</th><th>Age</th><th>Gender</th><th>Matched?</th></tr></thead>
         <tbody id="guest-table-body"></tbody>
       </table>
     </section>
@@ -96,7 +96,7 @@
     tbody.innerHTML = '';
     guests.forEach(function (g) {
       var tr = document.createElement('tr');
-      tr.innerHTML = '<td>' + escapeHtml(g.family_connection) + '</td><td>' + escapeHtml(g.gender) + '</td><td>' + (g.match_id ? 'Yes' : 'No') + '</td>';
+      tr.innerHTML = '<td>' + escapeHtml(g.family_connection) + '</td><td>' + escapeHtml(String(g.age || '')) + '</td><td>' + escapeHtml(g.gender) + '</td><td>' + (g.match_id ? 'Yes' : 'No') + '</td>';
       tbody.appendChild(tr);
     });
   }
@@ -120,19 +120,52 @@
     return ADJECTIVES[Math.floor(Math.random() * ADJECTIVES.length)] + ' ' + NOUNS[Math.floor(Math.random() * NOUNS.length)];
   }
 
-  // CUSTOMIZE: the +3 and +2 weights below are how strongly each factor
-  // pulls a pair together. Raise family-connection's weight if you want
-  // "meet someone outside your usual circle" to matter more than shared
-  // hobbies, or lower it if hobbies should matter more.
-  function matchScore(a, b) {
+  // CUSTOMIZE: all the weights below are just how strongly each factor pulls
+  // a pair together — raise/lower any number to rebalance.
+  function hobbyOverlapCount(a, b) {
     var ah = [a.hobby1, a.hobby2].filter(Boolean).map(function (s) { return s.toLowerCase().trim(); });
     var bh = [b.hobby1, b.hobby2].filter(Boolean).map(function (s) { return s.toLowerCase().trim(); });
+    var count = 0;
+    ah.forEach(function (h) { if (bh.indexOf(h) !== -1) count++; });
+    return count;
+  }
+
+  function ageScore(a, b) {
+    if (a.age == null || b.age == null) return 0;
+    var diff = Math.abs(a.age - b.age);
+    if (diff <= 2) return 4;
+    if (diff <= 5) return 2;
+    if (diff <= 10) return 1;
+    return 0;
+  }
+
+  function matchScore(a, b) {
+    var overlap = hobbyOverlapCount(a, b);
     var score = 0;
-    ah.forEach(function (h) { if (bh.indexOf(h) !== -1) score += 2; });
+
+    var aIsFamily = a.family_connection === 'Family';
+    var bIsFamily = b.family_connection === 'Family';
+
+    if (aIsFamily || bIsFamily) {
+      // Family members: everyone in the family already knows each other, so
+      // "meet someone new" doesn't apply the same way — instead find them the
+      // most genuinely compatible match: close in age, shares hobbies.
+      score += overlap * 3;
+      score += ageScore(a, b);
+      // Strong (not absolute) preference for pairing with a Friend of the
+      // family specifically — likely someone they haven't met yet, unlike
+      // another relative. If no Friend is available this round, they can
+      // still be matched on age/hobby fit with anyone else left.
+      if ((aIsFamily && b.family_connection === 'Friend') || (bIsFamily && a.family_connection === 'Friend')) {
+        score += 4;
+      }
+    } else {
+      // Everyone else: reward meeting someone from a different circle.
+      score += overlap * 2;
+      if (a.family_connection !== b.family_connection) score += 3;
+    }
+
     if (a.single_status === 'single' && b.single_status === 'single') score += 1;
-    // Reward pairs who know the family through DIFFERENT circles, so people
-    // meet someone new rather than someone from their own existing group.
-    if (a.family_connection && b.family_connection && a.family_connection !== b.family_connection) score += 3;
     return score;
   }
 
