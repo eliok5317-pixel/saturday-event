@@ -73,6 +73,15 @@
 
         <button type="submit" class="btn btn-primary">Check in</button>
       </form>
+
+      <div style="margin-top:18px; text-align:center;">
+        <a href="#" id="show-code-entry" style="font-size:14px; color:var(--ink-soft); text-decoration:underline;">Already checked in on another device? Enter your code</a>
+      </div>
+      <div id="code-entry-box" class="hidden" style="margin-top:12px;">
+        <label for="recover-code-input">Your code</label>
+        <input type="text" id="recover-code-input" placeholder="e.g. K7QX4" style="text-transform:uppercase;">
+        <button type="button" class="btn btn-secondary" id="recover-code-btn">Continue</button>
+      </div>
     </section>
 
     <!-- WAITING -->
@@ -80,6 +89,10 @@
       <div class="status-row"><span class="pulse-dot"></span><strong>Checked in</strong></div>
       <h1>Hang tight.</h1>
       <p>We're waiting for the host to run the matching. Keep this tab open — this screen will update on its own the moment you're matched.</p>
+      <div class="secret-ticket">
+        <p>Your code — save this. If you switch devices or clear your browser, come back to this link and enter it to get right back to your match:</p>
+        <div class="secret-word" id="my-code-waiting"></div>
+      </div>
     </section>
 
     <!-- MATCHED -->
@@ -98,6 +111,7 @@
       </div>
 
       <button type="button" class="btn btn-secondary" id="open-chat-btn">Open chat</button>
+      <p class="hint">Your code, in case you switch devices: <span id="my-code-matched"></span></p>
     </section>
 
     <!-- CHAT -->
@@ -138,6 +152,14 @@
   }
   var deviceId = getDeviceId();
 
+  // CUSTOMIZE: characters chosen to avoid look-alikes (no I, L, O, 0, 1).
+  var CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+  function generateAccessCode() {
+    var code = '';
+    for (var i = 0; i < 5; i++) code += CODE_ALPHABET[Math.floor(Math.random() * CODE_ALPHABET.length)];
+    return code;
+  }
+
   var myGuest = null, myMatch = null, partnerGuest = null, chatChannel = null;
 
   var views = ['view-loading', 'view-checkin', 'view-waiting', 'view-matched', 'view-chat'];
@@ -149,16 +171,39 @@
     b.classList.remove('hidden');
   }
 
+  function rememberGuest(guest) {
+    myGuest = guest;
+    if (guest.access_code) localStorage.setItem('matchnight_access_code', guest.access_code);
+  }
+
+  function renderMyCode() {
+    if (!myGuest || !myGuest.access_code) return;
+    var a = document.getElementById('my-code-waiting');
+    var b = document.getElementById('my-code-matched');
+    if (a) a.textContent = myGuest.access_code;
+    if (b) b.textContent = myGuest.access_code;
+  }
+
+  // Identity is primarily the access_code (works on any device). device_id
+  // is kept only to auto-recognize a returning visit on THIS SAME browser
+  // before they've ever needed to type a code.
   async function init() {
     try {
-      var res = await sb.from('guests').select('*').eq('device_id', deviceId).maybeSingle();
+      var savedCode = localStorage.getItem('matchnight_access_code');
+      var res;
+      if (savedCode) {
+        res = await sb.from('guests').select('*').eq('access_code', savedCode).maybeSingle();
+      } else {
+        res = await sb.from('guests').select('*').eq('device_id', deviceId).maybeSingle();
+      }
       if (res.error) throw res.error;
       if (res.data) {
-        myGuest = res.data;
+        rememberGuest(res.data);
         if (myGuest.match_id) {
           await loadMatch(myGuest.match_id);
         } else {
           show('view-waiting');
+          renderMyCode();
           subscribeToMyGuest();
         }
       } else {
@@ -172,9 +217,9 @@
   }
 
   function subscribeToMyGuest() {
-    sb.channel('guest-' + deviceId)
-      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'guests', filter: 'device_id=eq.' + deviceId }, function (payload) {
-        myGuest = payload.new;
+    sb.channel('guest-' + myGuest.id)
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'guests', filter: 'id=eq.' + myGuest.id }, function (payload) {
+        rememberGuest(payload.new);
         if (myGuest.match_id) loadMatch(myGuest.match_id);
       })
       .subscribe();
@@ -212,6 +257,7 @@
     if (sLabel) { sEl.textContent = sLabel; sEl.classList.remove('hidden'); } else { sEl.classList.add('hidden'); }
     document.getElementById('partner-description').textContent = partnerGuest.description;
     document.getElementById('secret-word').textContent = myMatch.secret_word;
+    renderMyCode();
     show('view-matched');
     launchConfetti();
   }
@@ -221,6 +267,7 @@
     var fd = new FormData(e.target);
     var payload = {
       device_id: deviceId,
+      access_code: generateAccessCode(),
       gender: fd.get('gender'),
       age: parseInt(fd.get('age'), 10) || null,
       family_connection: fd.get('family_connection'),
@@ -232,14 +279,44 @@
     var btn = e.target.querySelector('button[type=submit]');
     btn.disabled = true; btn.textContent = 'Checking in…';
     var res = await sb.from('guests').insert(payload).select().single();
+    // Access codes are random; on the astronomically unlikely chance of a
+    // collision, generate a fresh one and try exactly once more.
+    if (res.error && res.error.code === '23505' && String(res.error.message).indexOf('access_code') !== -1) {
+      payload.access_code = generateAccessCode();
+      res = await sb.from('guests').insert(payload).select().single();
+    }
     if (res.error) {
       showError('Something went wrong checking you in. Please try again.');
       btn.disabled = false; btn.textContent = 'Check in';
       return;
     }
-    myGuest = res.data;
+    rememberGuest(res.data);
     show('view-waiting');
+    renderMyCode();
     subscribeToMyGuest();
+  });
+
+  document.getElementById('show-code-entry').addEventListener('click', function (e) {
+    e.preventDefault();
+    document.getElementById('code-entry-box').classList.remove('hidden');
+  });
+
+  document.getElementById('recover-code-btn').addEventListener('click', async function () {
+    var code = document.getElementById('recover-code-input').value.trim().toUpperCase();
+    if (!code) return;
+    var res = await sb.from('guests').select('*').eq('access_code', code).maybeSingle();
+    if (res.error || !res.data) {
+      showError('That code doesn\u2019t match anyone checked in. Double check it and try again.');
+      return;
+    }
+    rememberGuest(res.data);
+    if (myGuest.match_id) {
+      await loadMatch(myGuest.match_id);
+    } else {
+      show('view-waiting');
+      renderMyCode();
+      subscribeToMyGuest();
+    }
   });
 
   document.getElementById('open-chat-btn').addEventListener('click', function () {
@@ -273,7 +350,10 @@
     var empty = log.querySelector('.chat-empty');
     if (empty) empty.remove();
     var div = document.createElement('div');
-    div.className = 'bubble ' + (msg.sender_device_id === deviceId ? 'me' : 'them');
+    // sender_device_id actually stores the guest's stable id (not the
+    // per-browser device id) so "me vs them" still shows correctly even if
+    // you recovered your session on a different device mid-chat.
+    div.className = 'bubble ' + (msg.sender_device_id === myGuest.id ? 'me' : 'them');
     div.textContent = msg.body;
     log.appendChild(div);
     log.scrollTop = log.scrollHeight;
@@ -285,7 +365,7 @@
     var text = input.value.trim();
     if (!text) return;
     input.value = '';
-    await sb.from('messages').insert({ match_id: myMatch.id, sender_device_id: deviceId, body: text });
+    await sb.from('messages').insert({ match_id: myMatch.id, sender_device_id: myGuest.id, body: text });
   });
 
   function launchConfetti() {

@@ -107,6 +107,8 @@ input:focus-visible, select:focus-visible, textarea:focus-visible, button:focus-
 .btn-primary { background: var(--coral); color: var(--ink); box-shadow: 4px 4px 0 var(--ink); }
 .btn-secondary { background: var(--paper); color: var(--ink); box-shadow: 4px 4px 0 var(--ink); }
 .btn-primary:active, .btn-secondary:active { box-shadow: 1px 1px 0 var(--ink); }
+.btn-danger { background: #E63950; color: #fff; box-shadow: 4px 4px 0 var(--ink); }
+.btn-danger:active { box-shadow: 1px 1px 0 var(--ink); }
 
 .pulse-dot {
   width: 12px; height: 12px;

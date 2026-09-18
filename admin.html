@@ -37,6 +37,11 @@
       <button type="button" class="btn btn-primary" id="run-matching-btn">Run matching now</button>
       <p class="hint" id="run-result"></p>
       <button type="button" class="btn btn-secondary" id="refresh-btn">Refresh stats</button>
+
+      <div style="margin-top:26px; padding-top:18px; border-top:2px dashed var(--ink);">
+        <p class="hint">Careful — this permanently wipes every guest, match, and chat message for the whole event. Only for clearing test runs.</p>
+        <button type="button" class="btn btn-danger" id="reset-btn">Reset all event data</button>
+      </div>
     </section>
 
     <section id="view-guestlist" class="card hidden">
@@ -81,6 +86,28 @@
 
   document.getElementById('refresh-btn').addEventListener('click', refreshStats);
   document.getElementById('run-matching-btn').addEventListener('click', runMatching);
+  document.getElementById('reset-btn').addEventListener('click', resetEventData);
+
+  async function resetEventData() {
+    var ok = window.confirm('This permanently deletes ALL checked-in guests, matches, and chat messages for this event. This cannot be undone. Continue?');
+    if (!ok) return;
+    var btn = document.getElementById('reset-btn');
+    btn.disabled = true; btn.textContent = 'Resetting…';
+    try {
+      var d1 = await sb.from('messages').delete().not('id', 'is', null);
+      var d2 = await sb.from('matches').delete().not('id', 'is', null);
+      var d3 = await sb.from('guests').delete().not('id', 'is', null);
+      if (d1.error || d2.error || d3.error) {
+        console.error(d1.error || d2.error || d3.error);
+        alert('Delete permission is missing — run supabase-migration-3.sql (delete policies) in the SQL Editor, then try again.');
+      }
+    } catch (e) {
+      console.error(e);
+      alert('Something went wrong resetting. Check the browser console.');
+    }
+    btn.disabled = false; btn.textContent = 'Reset all event data';
+    await refreshStats();
+  }
 
   async function refreshStats() {
     var res = await sb.from('guests').select('*').order('checked_in_at', { ascending: true });
@@ -120,8 +147,28 @@
     return ADJECTIVES[Math.floor(Math.random() * ADJECTIVES.length)] + ' ' + NOUNS[Math.floor(Math.random() * NOUNS.length)];
   }
 
-  // CUSTOMIZE: all the weights below are just how strongly each factor pulls
-  // a pair together — raise/lower any number to rebalance.
+  // ============================================================
+  // MATCHING RULES
+  // ============================================================
+
+  // CUSTOMIZE: the girl-gets-a-guy-her-age-or-older rule applies to every
+  // female by default (her own age is the floor). Raise this if you only
+  // want it to kick in above a specific age, e.g. set to 18 to skip it
+  // entirely for anyone younger than that.
+  var FEMALE_AGE_RULE_APPLIES_FROM = 0;
+
+  // Hard rule: a female can never be paired with a male younger than her.
+  // Returns false only when we can prove the pair breaks that rule.
+  function isAgeEligible(male, female) {
+    if (male.age == null || female.age == null) return true; // can't check, don't block
+    if (female.age < FEMALE_AGE_RULE_APPLIES_FROM) return true; // below the floor, rule doesn't apply
+    return male.age >= female.age;
+  }
+
+  function sameBackground(a, b) {
+    return a.family_connection === b.family_connection;
+  }
+
   function hobbyOverlapCount(a, b) {
     var ah = [a.hobby1, a.hobby2].filter(Boolean).map(function (s) { return s.toLowerCase().trim(); });
     var bh = [b.hobby1, b.hobby2].filter(Boolean).map(function (s) { return s.toLowerCase().trim(); });
@@ -139,42 +186,43 @@
     return 0;
   }
 
-  function matchScore(a, b) {
+  // CUSTOMIZE: relative weights — raise/lower any number to rebalance what
+  // matters most. This only scores pairs that already passed the hard
+  // rules above (age eligibility is never scored around, only enforced).
+  function pairScore(a, b) {
     var overlap = hobbyOverlapCount(a, b);
-    var score = 0;
+    var score = overlap * 2;
+    if (a.single_status === 'single' && b.single_status === 'single') score += 1;
 
     var aIsFamily = a.family_connection === 'Family';
     var bIsFamily = b.family_connection === 'Family';
-
     if (aIsFamily || bIsFamily) {
-      // Family members: everyone in the family already knows each other, so
-      // "meet someone new" doesn't apply the same way — instead find them the
-      // most genuinely compatible match: close in age, shares hobbies.
-      score += overlap * 3;
+      // Family members: weigh hobbies a bit more and add age-closeness —
+      // find them the most genuinely compatible match available.
+      score += overlap;
       score += ageScore(a, b);
-      // Strong (not absolute) preference for pairing with a Friend of the
-      // family specifically — likely someone they haven't met yet, unlike
-      // another relative. If no Friend is available this round, they can
-      // still be matched on age/hobby fit with anyone else left.
+      // Strong preference for pairing with a Friend of the family specifically.
       if ((aIsFamily && b.family_connection === 'Friend') || (bIsFamily && a.family_connection === 'Friend')) {
         score += 4;
       }
-    } else {
-      // Everyone else: reward meeting someone from a different circle.
-      score += overlap * 2;
-      if (a.family_connection !== b.family_connection) score += 3;
     }
-
-    if (a.single_status === 'single' && b.single_status === 'single') score += 1;
     return score;
   }
 
-  function greedyPair(poolA, poolB, usedIds, pairsOut) {
+  // Builds valid candidate pairs from two pools under a given set of rules,
+  // then greedily assigns the highest-scoring ones first.
+  function matchPool(poolA, poolB, opts, usedIds, pairsOut) {
     var candidates = [];
     poolA.forEach(function (a) {
       poolB.forEach(function (b) {
         if (a.id === b.id) return;
-        candidates.push({ a: a, b: b, score: matchScore(a, b) });
+        if (opts.requireDifferentBackground && sameBackground(a, b)) return;
+        if (opts.enforceAgeRule) {
+          var male = a.gender === 'male' ? a : (b.gender === 'male' ? b : null);
+          var female = a.gender === 'female' ? a : (b.gender === 'female' ? b : null);
+          if (male && female && !isAgeEligible(male, female)) return;
+        }
+        candidates.push({ a: a, b: b, score: pairScore(a, b) });
       });
     });
     candidates.sort(function (x, y) { return y.score - x.score; });
@@ -203,17 +251,26 @@
       var usedIds = new Set();
       var pairs = [];
 
-      // Primary pass: opposite gender, best hobby/vibe match first
-      greedyPair(males, females, usedIds, pairs);
+      // Pass 1 — opposite gender, DIFFERENT background required, girl's-age
+      // floor enforced. This is the pass that should catch almost everyone.
+      matchPool(males, females, { requireDifferentBackground: true, enforceAgeRule: true }, usedIds, pairs);
 
-      // Fallback pass: anyone still unmatched (leftover gender imbalance, or "other")
-      // gets paired with whoever's left, by shared hobbies — so nobody is stuck
-      // waiting forever just because the room's gender split is uneven.
+      // Pass 2 — same-background pairing allowed now (the "shortage"
+      // exception), but still opposite gender and the age floor still holds.
+      var remMales = males.filter(function (g) { return !usedIds.has(g.id); });
+      var remFemales = females.filter(function (g) { return !usedIds.has(g.id); });
+      matchPool(remMales, remFemales, { requireDifferentBackground: false, enforceAgeRule: true }, usedIds, pairs);
+
+      // Pass 3 — true last resort for whoever's still left (a real gender-count
+      // imbalance, or a female for whom no age-eligible male exists at all
+      // right now). Background is unrestricted here; the age floor is still
+      // respected for any male/female pair, but same-gender pairing is
+      // allowed so people aren't left waiting indefinitely.
       var remaining = unmatched.filter(function (g) { return !usedIds.has(g.id); });
-      greedyPair(remaining, remaining, usedIds, pairs);
+      matchPool(remaining, remaining, { requireDifferentBackground: false, enforceAgeRule: true }, usedIds, pairs);
 
       if (pairs.length === 0) {
-        resultEl.textContent = 'No new matches — nobody new to pair up right now.';
+        resultEl.textContent = 'No new matches — nobody eligible to pair up right now.';
         btn.disabled = false; btn.textContent = 'Run matching now';
         await refreshStats();
         return;
