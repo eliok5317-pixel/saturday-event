@@ -177,12 +177,12 @@
     return a.family_connection === b.family_connection;
   }
 
-  // ABSOLUTE rule, checked in every pass with no shortage exception: a
-  // family member may only be paired with someone whose connection is
-  // "Friend" or "Other" — never another Family member, and never
-  // Satellity/SABIS/Germany/AUB, since those circles aren't actually new
-  // to a family member. If nobody eligible is available, they stay
-  // unmatched rather than get a pairing that defeats the point.
+  // Normally strict, checked in the main passes: a family member may only
+  // be paired with someone whose connection is "Friend" or "Other" — never
+  // another Family member, and never Satellity/SABIS/Germany/AUB, since
+  // those circles aren't actually new to a family member. As a genuine
+  // last resort (so nobody goes completely unmatched), this can be turned
+  // off for a pass via opts.enforceFamilyRule — see runMatching below.
   function isFamilyPairingAllowed(a, b) {
     var aIsFamily = a.family_connection === 'Family';
     var bIsFamily = b.family_connection === 'Family';
@@ -242,7 +242,7 @@
     poolA.forEach(function (a) {
       poolB.forEach(function (b) {
         if (a.id === b.id) return;
-        if (!isFamilyPairingAllowed(a, b)) return;
+        if (opts.enforceFamilyRule && !isFamilyPairingAllowed(a, b)) return;
         if (opts.requireDifferentBackground && sameBackground(a, b)) return;
         if (opts.enforceAgeRule) {
           var male = a.gender === 'male' ? a : (b.gender === 'male' ? b : null);
@@ -278,23 +278,31 @@
       var usedIds = new Set();
       var pairs = [];
 
-      // Pass 1 — opposite gender, DIFFERENT background required, girl's-age
-      // floor enforced. This is the pass that should catch almost everyone.
-      matchPool(males, females, { requireDifferentBackground: true, enforceAgeRule: true }, usedIds, pairs);
+      // Pass 1 — opposite gender, DIFFERENT background required, family-only-
+      // Friend/Other rule enforced, girl's-age floor/ceiling enforced. This
+      // is the pass that should catch almost everyone in a well-mixed room.
+      matchPool(males, females, { requireDifferentBackground: true, enforceAgeRule: true, enforceFamilyRule: true }, usedIds, pairs);
 
       // Pass 2 — same-background pairing allowed now (the "shortage"
-      // exception), but still opposite gender and the age floor still holds.
-      var remMales = males.filter(function (g) { return !usedIds.has(g.id); });
-      var remFemales = females.filter(function (g) { return !usedIds.has(g.id); });
-      matchPool(remMales, remFemales, { requireDifferentBackground: false, enforceAgeRule: true }, usedIds, pairs);
+      // exception), but still opposite gender, family rule, and age rule.
+      var remMales1 = males.filter(function (g) { return !usedIds.has(g.id); });
+      var remFemales1 = females.filter(function (g) { return !usedIds.has(g.id); });
+      matchPool(remMales1, remFemales1, { requireDifferentBackground: false, enforceAgeRule: true, enforceFamilyRule: true }, usedIds, pairs);
 
-      // Pass 3 — true last resort for whoever's still left (a real gender-count
-      // imbalance, or a female for whom no age-eligible male exists at all
-      // right now). Background is unrestricted here; the age floor is still
-      // respected for any male/female pair, but same-gender pairing is
-      // allowed so people aren't left waiting indefinitely.
+      // Pass 3 — safety net so nobody is left waiting over these rules: still
+      // opposite gender, but the age floor/ceiling and the family-only-
+      // Friend/Other rule are both dropped. This is the "a girl is older
+      // than the guy, but there's no other option — match them anyway" case.
+      var remMales2 = males.filter(function (g) { return !usedIds.has(g.id); });
+      var remFemales2 = females.filter(function (g) { return !usedIds.has(g.id); });
+      matchPool(remMales2, remFemales2, { requireDifferentBackground: false, enforceAgeRule: false, enforceFamilyRule: false }, usedIds, pairs);
+
+      // Pass 4 — absolute last resort: whoever is still unmatched (a genuine
+      // gender-count imbalance) gets paired with anyone else left over,
+      // same gender included, no other rules at all. This only ever
+      // triggers when Pass 3 truly had nobody of the opposite gender left.
       var remaining = unmatched.filter(function (g) { return !usedIds.has(g.id); });
-      matchPool(remaining, remaining, { requireDifferentBackground: false, enforceAgeRule: true }, usedIds, pairs);
+      matchPool(remaining, remaining, { requireDifferentBackground: false, enforceAgeRule: false, enforceFamilyRule: false }, usedIds, pairs);
 
       if (pairs.length === 0) {
         resultEl.textContent = 'No new matches — nobody eligible to pair up right now.';
