@@ -34,14 +34,18 @@
           <option value="other">Other / prefer not to say</option>
         </select>
 
+        <label for="age">Your age</label>
+        <input type="number" id="age" name="age" required min="1" max="120" placeholder="e.g. 24">
+
         <label for="family_connection">How do you know the Khoury family?</label>
         <select id="family_connection" name="family_connection" required>
           <option value="" disabled selected>Choose one</option>
+          <option value="Family">I'm a family member</option>
+          <option value="Friend">Friend of the family</option>
           <option value="Satellity">Satellity</option>
           <option value="SABIS">SABIS</option>
           <option value="Germany">Germany</option>
           <option value="AUB">AUB</option>
-          <option value="Chemineuf">Chemineuf</option>
           <option value="Other">Other</option>
         </select>
 
@@ -83,6 +87,7 @@
       <div class="status-row"><span class="pulse-dot" style="background:var(--coral)"></span><strong>You've been matched!</strong></div>
       <h1 class="partner-name">Your match</h1>
       <p class="partner-fact" id="partner-connection"></p>
+      <p class="partner-fact" id="partner-age"></p>
       <p class="partner-fact" id="partner-hobbies"></p>
       <p class="partner-fact" id="partner-single"></p>
       <p id="partner-description"></p>
@@ -194,6 +199,12 @@
 
   function renderMatched() {
     document.getElementById('partner-connection').textContent = 'Knows the family through: ' + partnerGuest.family_connection;
+    if (partnerGuest.age) {
+      document.getElementById('partner-age').textContent = 'Age: ' + partnerGuest.age;
+      document.getElementById('partner-age').classList.remove('hidden');
+    } else {
+      document.getElementById('partner-age').classList.add('hidden');
+    }
     var hobbies = [partnerGuest.hobby1, partnerGuest.hobby2].filter(Boolean).join(' & ');
     document.getElementById('partner-hobbies').textContent = 'Into: ' + hobbies;
     var sLabel = singleLabel(partnerGuest.single_status);
@@ -211,6 +222,7 @@
     var payload = {
       device_id: deviceId,
       gender: fd.get('gender'),
+      age: parseInt(fd.get('age'), 10) || null,
       family_connection: fd.get('family_connection'),
       hobby1: (fd.get('hobby1') || '').trim(),
       hobby2: (fd.get('hobby2') || '').trim() || null,
